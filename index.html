@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SCULPTit</title>
+  <meta name="description" content="SCULPTit - offline-capable WebGL digital-clay sculpting web app." />
+  <link rel="icon" type="image/png" href="assets/img/favicon.png" />
+  <link rel="stylesheet" href="assets/vendor/bootstrap/bootstrap.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app" class="sculptit-app">
+    <canvas id="viewport" aria-label="SCULPTit 3D Viewport"></canvas>
+    <div id="brushCursor" class="brush-cursor" aria-hidden="true"></div>
+
+    <header class="app-bar glass-panel">
+      <div class="brand-wrap">
+        <img class="brand-logo" src="assets/img/logo.png" alt="SCULPTit Logo" />
+        <div class="brand">SCULPT<span>it</span></div>
+      </div>
+      <div class="app-actions">
+        <span id="polyStats" class="pill stat-pill">0 V / 0 F</span>
+        <button id="controlsButton" class="btn btn-sm btn-outline-primary btn-icon btn-pill" title="Controls">⌨</button>
+        <button id="docsButton" class="btn btn-sm btn-outline-primary btn-icon btn-pill" title="Documentation">i</button>
+      </div>
+    </header>
+
+    <aside class="tools-panel glass-panel" aria-label="Sculpt Tools">
+      <section class="panel-section compact-section">
+        <div class="section-head">
+          <h2>Tools</h2>
+          <span id="activeToolBadge" class="pill">Pull</span>
+        </div>
+        <div class="tool-grid" role="toolbar" aria-label="Brush tool selection">
+          <button class="tool-btn active" data-tool="pull" title="Pull / Draw [1]"><span>↥</span><small>Pull</small></button>
+          <button class="tool-btn" data-tool="push" title="Push / Dig [2]"><span>↧</span><small>Push</small></button>
+          <button class="tool-btn" data-tool="clay" title="Clay Build-up [3]"><span>◒</span><small>Clay</small></button>
+          <button class="tool-btn" data-tool="inflate" title="Inflate [4]"><span>◎</span><small>Inflate</small></button>
+          <button class="tool-btn" data-tool="flatten" title="Flatten [5]"><span>▱</span><small>Flat</small></button>
+          <button class="tool-btn" data-tool="smooth" title="Smooth [Shift]"><span>≈</span><small>Smooth</small></button>
+          <button class="tool-btn" data-tool="pinch" title="Pinch"><span>◇</span><small>Pinch</small></button>
+          <button class="tool-btn" data-tool="crease" title="Crease"><span>⌁</span><small>Crease</small></button>
+          <button class="tool-btn" data-tool="scrape" title="Scrape / Trim"><span>▰</span><small>Scrape</small></button>
+          <button class="tool-btn" data-tool="grab" title="Grab / Move"><span>✥</span><small>Grab</small></button>
+          <button class="tool-btn" data-tool="twist" title="Twist"><span>⟳</span><small>Twist</small></button>
+          <button class="tool-btn" data-tool="noise" title="Surface Noise"><span>∿</span><small>Noise</small></button>
+          <button class="tool-btn" data-tool="relax" title="Relax Topology"><span>⌇</span><small>Relax</small></button>
+          <button class="tool-btn" data-tool="mask" title="Paint Mask"><span>◉</span><small>Mask</small></button>
+          <button class="tool-btn" data-tool="eraseMask" title="Erase Mask"><span>◌</span><small>Erase</small></button>
+          <button class="tool-btn" data-tool="dent" title="Dent / Dig"><span>∩</span><small>Dent</small></button>
+          <button class="tool-btn" data-tool="ridge" title="Ridge Build-up"><span>⋀</span><small>Ridge</small></button>
+          <button class="tool-btn" data-tool="polish" title="Polish Surface"><span>▭</span><small>Polish</small></button>
+          <button class="tool-btn" data-tool="smear" title="Smear Surface"><span>⇢</span><small>Smear</small></button>
+          <button class="tool-btn" data-tool="move" title="Move Region"><span>✣</span><small>Move</small></button>
+          <button class="tool-btn" data-tool="scale" title="Scale Region"><span>⤢</span><small>Scale</small></button>
+        </div>
+      </section>
+
+      <section class="panel-section layers-section">
+        <div class="section-head">
+          <h2>Layers</h2>
+          <span id="layerCountBadge" class="pill">1</span>
+        </div>
+        <div id="layerList" class="layer-list" aria-label="Scene layer list"></div>
+        <div class="button-grid mt-2">
+          <button id="addLayer" class="neon-btn">Add Layer</button>
+          <button id="deleteLayer" class="neon-btn">Delete</button>
+        </div>
+      </section>
+
+      <section class="panel-section shortcut-section">
+        <h2>Quick Keys</h2>
+        <div class="mini-help">
+          <div><kbd>LMB</kbd><span>Sculpt</span></div>
+          <div><kbd>RMB</kbd><span>Orbit</span></div>
+          <div><kbd>MMB</kbd><span>Pan</span></div>
+          <div><kbd>Wheel</kbd><span>Zoom</span></div>
+          <div><kbd>Shift</kbd><span>Smooth</span></div>
+          <div><kbd>Alt</kbd><span>Orbit / invert Pull</span></div>
+          <div><kbd>F</kbd><span>Frame model</span></div>
+        </div>
+      </section>
+
+      <div class="left-footer">
+        <span class="version-pill">v1.2.1</span>
+        <a class="repo-link" href="https://github.com/complicatiion/SCULPTit" target="_blank" rel="noopener">GitHub Repo</a>
+      </div>
+    </aside>
+
+    <aside class="settings-panel glass-panel" aria-label="Settings">
+      <section class="panel-section">
+        <div class="section-head">
+          <h2>Brush</h2>
+          <button id="resetBrush" class="ghost-link">Reset</button>
+        </div>
+
+        <label for="radius" class="range-label"><span>Radius</span><strong id="radiusValue">0.22</strong></label>
+        <input id="radius" class="form-range neon-range" type="range" min="0.03" max="0.80" step="0.01" value="0.22" />
+
+        <label for="strength" class="range-label"><span>Strength</span><strong id="strengthValue">0.045</strong></label>
+        <input id="strength" class="form-range neon-range" type="range" min="0.001" max="0.12" step="0.001" value="0.045" />
+
+        <label for="hardness" class="range-label"><span>Falloff / Hardness</span><strong id="hardnessValue">0.45</strong></label>
+        <input id="hardness" class="form-range neon-range" type="range" min="0" max="1" step="0.01" value="0.45" />
+
+        <label for="spacing" class="range-label"><span>Stroke Spacing</span><strong id="spacingValue">0.08</strong></label>
+        <input id="spacing" class="form-range neon-range" type="range" min="0.01" max="0.30" step="0.01" value="0.08" />
+
+        <div class="switch-row">
+          <label class="switch"><input id="symmetry" type="checkbox" /><span></span></label>
+          <span>X-Symmetry</span>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2>Primitives</h2>
+        <label class="select-label" for="primitiveSelect">Base Mesh</label>
+        <select id="primitiveSelect" class="neon-select">
+          <option value="sphere">Clay Sphere</option>
+          <option value="cube">Subdivided Cube</option>
+          <option value="plane">Plane Grid</option>
+          <option value="cylinder">Cylinder</option>
+          <option value="cone">Cone</option>
+          <option value="torus">Torus</option>
+        </select>
+
+        <label for="detail" class="range-label"><span>Detail Resolution</span><strong id="detailValue">32</strong></label>
+        <input id="detail" class="form-range neon-range" type="range" min="8" max="80" step="2" value="32" />
+
+        <div class="button-grid mt-2">
+          <button id="newModel" class="neon-btn">New</button>
+          <button id="subdivideMesh" class="neon-btn">Subdivide +1</button>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2>Viewport</h2>
+        <div class="switch-row">
+          <label class="switch"><input id="wireframeToggle" type="checkbox" checked /><span></span></label>
+          <span>Wireframe Overlay</span>
+        </div>
+        <div class="switch-row">
+          <label class="switch"><input id="clayMatcapToggle" type="checkbox" checked /><span></span></label>
+          <span>Clay Shading</span>
+        </div>
+        <div class="switch-row">
+          <label class="switch"><input id="facetedToggle" type="checkbox" checked /><span></span></label>
+          <span>Faceted Surface</span>
+        </div>
+        <div class="switch-row">
+          <label class="switch"><input id="invertOrbitY" type="checkbox" /><span></span></label>
+          <span>Invert Orbit Y</span>
+        </div>
+        <label for="lightIntensity" class="range-label"><span>Light Intensity</span><strong id="lightIntensityValue">0.85</strong></label>
+        <input id="lightIntensity" class="form-range neon-range" type="range" min="0.10" max="1.60" step="0.05" value="0.85" />
+        <label for="lightAzimuth" class="range-label"><span>Light Left / Right</span><strong id="lightAzimuthValue">35°</strong></label>
+        <input id="lightAzimuth" class="form-range neon-range" type="range" min="-180" max="180" step="1" value="35" />
+      </section>
+
+      <section class="panel-section">
+        <h2>Project</h2>
+        <div class="button-grid">
+          <button id="saveFile" class="neon-btn">Save File</button>
+          <button id="loadFile" class="neon-btn">Load File</button>
+          <button id="quickSave" class="neon-btn">Quick Save</button>
+          <button id="quickLoad" class="neon-btn">Quick Load</button>
+        </div>
+        <input id="projectFileInput" type="file" accept=".sculptit,.json" hidden />
+      </section>
+
+      <section class="panel-section">
+        <h2>Export</h2>
+        <div class="button-grid">
+          <button id="exportObj" class="neon-btn">OBJ</button>
+          <button id="exportStl" class="neon-btn">STL</button>
+        </div>
+      </section>
+    </aside>
+
+    <div id="statusText" class="status-toast glass-panel">Ready</div>
+
+    <div id="modalBackdrop" class="modal-backdrop-custom" hidden>
+      <article class="doc-card glass-panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="doc-header">
+          <h2 id="modalTitle">Documentation</h2>
+          <button id="closeModal" class="btn btn-sm btn-outline-primary btn-icon btn-pill" title="Close">×</button>
+        </div>
+        <div id="modalBody" class="doc-body"></div>
+      </article>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
