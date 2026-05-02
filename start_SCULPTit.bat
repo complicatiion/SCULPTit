@@ -40,4 +40,3 @@ pause
 
 :end
 endlocal
-REM sksdesign (c) 2026

@@ -2,8 +2,37 @@
 
 # SCULPTit Static Web Sculpting Editor
 
-SCULPTit is a lightweight static 3D sculpting editor for fast local digital-clay modeling, primitive blocking and mesh export. It is designed for a quick browser-based workflow without Electron, Node.js installation or a heavy desktop runtime. The application runs from plain project files through a local static webserver and stores/exports data through browser download and upload APIs.
+SCULPTit is a lightweight static 3D sculpting editor for fast local digital-clay modeling, primitive blocking and mesh export.
+The application runs from plain project files through a local static webserver and stores/exports data through browser download and upload APIs.
 
+
+---
+
+## Prerequisites (Python)
+
+### 1. Dependencies
+This tool requires the following environments:
+* **Python 3.12+:** Required for script execution.
+
+
+### 2. Installation (Windows)
+
+#### Option A: Command Line (cmd)
+Install via Windows Package Manager (**winget**):
+```cmd
+winget install Python.Python or Python.Python.3.12
+```
+
+#### Option B: use Python Manager, additional Infos down below!
+
+```
+https://docs.python.org/dev/using/windows.html
+```
+#### Option C: use Standard .exe Package to Install python to your System
+
+```
+https://www.python.org/downloads/windows/
+```
 
 ---
 

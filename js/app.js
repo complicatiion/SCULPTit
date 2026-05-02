@@ -1,9 +1,10 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.2.1';
-  const STORAGE_KEY = 'SCULPTit.project.v1.2.1';
+  const VERSION = '1.2.3';
+  const STORAGE_KEY = 'SCULPTit.project.v1.2.3';
   const MAX_VERTICES = 140000;
+  const HISTORY_LIMIT = 50;
 
   const canvas = document.getElementById('viewport');
   const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -29,8 +30,10 @@
     lightAzimuth: $('lightAzimuth'), lightAzimuthValue: $('lightAzimuthValue'),
     saveFile: $('saveFile'), loadFile: $('loadFile'), quickSave: $('quickSave'), quickLoad: $('quickLoad'), projectFileInput: $('projectFileInput'),
     exportObj: $('exportObj'), exportStl: $('exportStl'),
+    importModel: $('importModel'), modelFileInput: $('modelFileInput'), importFileName: $('importFileName'), importTypeBadge: $('importTypeBadge'),
     docsButton: $('docsButton'), controlsButton: $('controlsButton'),
     layerList: $('layerList'), layerCountBadge: $('layerCountBadge'), addLayer: $('addLayer'), deleteLayer: $('deleteLayer'),
+    undoHistory: $('undoHistory'), redoHistory: $('redoHistory'), historyList: $('historyList'), historyCountBadge: $('historyCountBadge'),
     modalBackdrop: $('modalBackdrop'), closeModal: $('closeModal'), modalTitle: $('modalTitle'), modalBody: $('modalBody'),
     brushCursor: $('brushCursor'), statusText: $('statusText'), polyStats: $('polyStats')
   };
@@ -61,7 +64,15 @@
     lastStrokePoint: null,
     strokeId: 1,
     dirty: false,
-    saveHandle: null
+    saveHandle: null,
+    strokeChanged: false,
+    strokeHistoryBefore: null,
+    strokeHistoryLabel: ''
+  };
+
+  const history = {
+    undoStack: [],
+    redoStack: []
   };
 
   const camera = {
@@ -170,6 +181,7 @@
   uploadMesh(true);
   bindEvents();
   renderLayerList();
+  renderHistoryList();
   resize();
   frameModel();
   setStatus(`SCULPTit v${VERSION} ready`);
@@ -205,13 +217,18 @@
     ui.clayMatcapToggle.addEventListener('change', () => state.clayShading = ui.clayMatcapToggle.checked);
     ui.facetedToggle.addEventListener('change', () => state.faceted = ui.facetedToggle.checked);
     ui.invertOrbitY.addEventListener('change', () => state.invertOrbitY = ui.invertOrbitY.checked);
-    ui.primitiveSelect.addEventListener('change', () => state.primitive = ui.primitiveSelect.value);
+    ui.primitiveSelect.addEventListener('change', () => {
+      state.primitive = ui.primitiveSelect.value;
+      if (state.primitive !== 'imported') clearImportedPrimitiveOption(false);
+    });
 
     ui.resetBrush.addEventListener('click', resetBrushSettings);
     ui.newModel.addEventListener('click', () => createNewModel());
     ui.subdivideMesh.addEventListener('click', subdivideCurrentMesh);
     ui.addLayer.addEventListener('click', addLayerFromPrimitive);
     ui.deleteLayer.addEventListener('click', deleteActiveLayer);
+    ui.undoHistory.addEventListener('click', undoHistoryAction);
+    ui.redoHistory.addEventListener('click', redoHistoryAction);
     ui.saveFile.addEventListener('click', saveProjectFile);
     ui.loadFile.addEventListener('click', () => ui.projectFileInput.click());
     ui.projectFileInput.addEventListener('change', loadProjectFile);
@@ -219,6 +236,8 @@
     ui.quickLoad.addEventListener('click', quickLoad);
     ui.exportObj.addEventListener('click', exportObj);
     ui.exportStl.addEventListener('click', exportStl);
+    ui.importModel.addEventListener('click', () => ui.modelFileInput.click());
+    ui.modelFileInput.addEventListener('change', importModelFile);
     ui.docsButton.addEventListener('click', openDocumentation);
     ui.controlsButton.addEventListener('click', openControls);
     ui.closeModal.addEventListener('click', closeModal);
@@ -277,7 +296,13 @@
     state.isSculpting = !state.isOrbiting && !state.isPanning && button === 0;
     state.lastHit = null;
     state.lastStrokePoint = null;
+    state.strokeChanged = false;
+    state.strokeHistoryBefore = null;
+    state.strokeHistoryLabel = '';
     if (state.isSculpting) {
+      const tool = e.shiftKey ? 'smooth' : state.activeTool;
+      state.strokeHistoryBefore = createHistoryPayload();
+      state.strokeHistoryLabel = `${toolLabel(tool)} Stroke`;
       state.strokeId += 1;
       sculptAtPointer(true);
     }
@@ -310,9 +335,15 @@
       normals = computeNormals(mesh.positions, mesh.indices);
       commitActiveLayer();
       uploadMesh(false);
+      if (state.strokeChanged && state.strokeHistoryBefore) {
+        pushHistoryEntry(state.strokeHistoryLabel || 'Sculpt Stroke', state.strokeHistoryBefore, createHistoryPayload());
+      }
       setDirty(true);
     }
     state.isSculpting = false;
+    state.strokeChanged = false;
+    state.strokeHistoryBefore = null;
+    state.strokeHistoryLabel = '';
     state.isOrbiting = false;
     state.isPanning = false;
     state.lastHit = null;
@@ -332,6 +363,8 @@
     state.modifiers.ctrl = e.ctrlKey;
     const key = e.key.toLowerCase();
     if (e.repeat) return;
+    if (key === 'z' && e.ctrlKey) { e.preventDefault(); e.shiftKey ? redoHistoryAction() : undoHistoryAction(); return; }
+    if (key === 'y' && e.ctrlKey) { e.preventDefault(); redoHistoryAction(); return; }
     if (key === 'shift') {
       state.tempTool = state.activeTool;
       setToolVisualOnly('smooth');
@@ -509,6 +542,7 @@
       positions[p + 1] = next[1];
       positions[p + 2] = next[2];
     }
+    state.strokeChanged = true;
     setDirty(true);
   }
 
@@ -598,14 +632,18 @@
   }
 
   function createNewModel() {
-    const next = prepareMesh(createPrimitive(state.primitive, state.detail));
-    replaceMesh(next, primitiveLabel(state.primitive));
+    const before = createHistoryPayload();
+    const primitiveType = getPrimitiveBuildType();
+    const next = prepareMesh(createPrimitive(primitiveType, state.detail));
+    replaceMesh(next, primitiveLabel(primitiveType), primitiveType);
+    updateImportInfo(null);
     frameModel();
+    pushHistoryEntry(`New ${primitiveLabel(primitiveType)}`, before, createHistoryPayload());
     setDirty(true);
-    setStatus(`New ${primitiveLabel(state.primitive)} created on active layer`);
+    setStatus(`New ${primitiveLabel(primitiveType)} created on active layer`);
   }
 
-  function replaceMesh(nextMesh, nextName) {
+  function replaceMesh(nextMesh, nextName, primitiveType = state.primitive) {
     mesh = prepareMesh(nextMesh);
     topology = buildTopology(mesh.indices, mesh.positions.length / 3);
     normals = computeNormals(mesh.positions, mesh.indices);
@@ -618,7 +656,7 @@
       layer.normals = normals;
       layer.lineIndices = lineIndices;
       layer.bounds = bounds;
-      layer.primitive = state.primitive;
+      layer.primitive = primitiveType;
       if (nextName) layer.name = nextName;
     }
     uploadMesh(true);
@@ -627,6 +665,7 @@
   }
 
   function subdivideCurrentMesh() {
+    const before = createHistoryPayload();
     const currentVertices = mesh.positions.length / 3;
     const predicted = currentVertices + topology.uniqueEdges;
     if (predicted > MAX_VERTICES) {
@@ -635,24 +674,30 @@
     }
     const next = prepareMesh(subdivide(mesh));
     replaceMesh(next);
+    pushHistoryEntry('Subdivide Active Layer', before, createHistoryPayload());
     setDirty(true);
     setStatus('Active layer subdivided');
   }
 
   function addLayerFromPrimitive() {
+    const before = createHistoryPayload();
+    const primitiveType = getPrimitiveBuildType();
     layerSerial += 1;
-    const next = prepareMesh(createPrimitive(state.primitive, state.detail));
+    const next = prepareMesh(createPrimitive(primitiveType, state.detail));
     const offset = (layers.length) * 1.35;
     offsetMesh(next, [offset, 0, 0]);
-    const layer = makeLayer(`layer-${Date.now()}-${layerSerial}`, `${primitiveLabel(state.primitive)} ${layerSerial}`, state.primitive, next);
+    const layer = makeLayer(`layer-${Date.now()}-${layerSerial}`, `${primitiveLabel(primitiveType)} ${layerSerial}`, primitiveType, next);
     layers.push(layer);
     setActiveLayer(layer.id);
+    updateImportInfo(null);
     frameModel();
+    pushHistoryEntry(`Add ${layer.name}`, before, createHistoryPayload());
     setDirty(true);
     setStatus(`${layer.name} added`);
   }
 
   function deleteActiveLayer() {
+    const before = createHistoryPayload();
     if (layers.length <= 1) {
       setStatus('At least one layer is required');
       return;
@@ -663,6 +708,7 @@
     const fallback = layers[Math.max(0, index - 1)] || layers[0];
     setActiveLayer(fallback.id);
     frameModel();
+    pushHistoryEntry(`Delete ${removed.name}`, before, createHistoryPayload());
     setDirty(true);
     setStatus(`${removed.name} deleted`);
   }
@@ -679,6 +725,99 @@
       row.innerHTML = `<span class="layer-dot"></span><strong>${escapeHtml(layer.name)}</strong><em>${meshStats(layer.mesh)}</em>`;
       row.addEventListener('click', () => setActiveLayer(layer.id));
       ui.layerList.appendChild(row);
+    });
+  }
+
+
+
+  function createHistoryPayload() {
+    return createProjectPayload();
+  }
+
+  function clonePayload(payload) {
+    return JSON.parse(JSON.stringify(payload));
+  }
+
+  function pushHistoryEntry(label, before, after) {
+    if (!before || !after) return;
+    history.undoStack.push({
+      id: `hist-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      label,
+      before: clonePayload(before),
+      after: clonePayload(after),
+      createdAt: new Date().toISOString()
+    });
+    if (history.undoStack.length > HISTORY_LIMIT) history.undoStack.shift();
+    history.redoStack = [];
+    renderHistoryList();
+  }
+
+  function undoHistoryAction() {
+    const entry = history.undoStack.pop();
+    if (!entry) {
+      setStatus('Nothing to undo');
+      renderHistoryList();
+      return;
+    }
+    restoreHistoryPayload(entry.before);
+    history.redoStack.push(entry);
+    renderHistoryList();
+    setDirty(true);
+    setStatus(`Undo: ${entry.label}`);
+  }
+
+  function redoHistoryAction() {
+    const entry = history.redoStack.pop();
+    if (!entry) {
+      setStatus('Nothing to redo');
+      renderHistoryList();
+      return;
+    }
+    restoreHistoryPayload(entry.after);
+    history.undoStack.push(entry);
+    renderHistoryList();
+    setDirty(true);
+    setStatus(`Redo: ${entry.label}`);
+  }
+
+  function restoreHistoryPayload(payload) {
+    loadProjectPayload(clonePayload(payload));
+    setDirty(true);
+  }
+
+  function renderHistoryList() {
+    if (!ui.historyList) return;
+    const undoCount = history.undoStack.length;
+    ui.historyCountBadge.textContent = String(undoCount);
+    ui.undoHistory.disabled = undoCount === 0;
+    ui.redoHistory.disabled = history.redoStack.length === 0;
+    ui.historyList.innerHTML = '';
+    if (undoCount === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'history-empty';
+      empty.textContent = 'No actions yet';
+      ui.historyList.appendChild(empty);
+      return;
+    }
+    [...history.undoStack].reverse().forEach((entry, reverseIndex) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = reverseIndex === 0 ? 'history-row active' : 'history-row';
+      row.title = entry.label;
+      const number = undoCount - reverseIndex;
+      row.innerHTML = `<span class="history-index">${number}</span><strong>${escapeHtml(entry.label)}</strong>`;
+      row.addEventListener('click', () => {
+        const steps = reverseIndex + 1;
+        for (let i = 0; i < steps; i++) {
+          const item = history.undoStack.pop();
+          if (!item) break;
+          restoreHistoryPayload(item.before);
+          history.redoStack.push(item);
+        }
+        renderHistoryList();
+        setStatus(`History restored: ${entry.label}`);
+      });
+      ui.historyList.appendChild(row);
     });
   }
 
@@ -726,7 +865,7 @@
   }
 
   function primitiveLabel(type) {
-    const map = { sphere: 'Clay Sphere', cube: 'Subdivided Cube', plane: 'Plane Grid', cylinder: 'Cylinder', cone: 'Cone', torus: 'Torus' };
+    const map = { sphere: 'Clay Sphere', cube: 'Subdivided Cube', plane: 'Plane Grid', cylinder: 'Cylinder', cone: 'Cone', torus: 'Torus', imported: 'Imported Mesh', 'imported-obj': 'Imported OBJ', 'imported-stl': 'Imported STL' };
     return map[type] || 'Primitive';
   }
 
@@ -734,6 +873,249 @@
     const v = layerMesh.positions.length / 3;
     const f = layerMesh.indices.length / 3;
     return `${v.toLocaleString('en-US')} V / ${f.toLocaleString('en-US')} F`;
+  }
+
+
+  function getPrimitiveBuildType() {
+    if (state.primitive === 'imported' || String(state.primitive).startsWith('imported-')) {
+      state.primitive = 'sphere';
+      clearImportedPrimitiveOption(true);
+      return 'sphere';
+    }
+    return state.primitive;
+  }
+
+  function ensureImportedPrimitiveOption(label) {
+    let option = ui.primitiveSelect.querySelector('option[value="imported"]');
+    if (!option) {
+      option = document.createElement('option');
+      option.value = 'imported';
+      ui.primitiveSelect.prepend(option);
+    }
+    option.textContent = `Imported: ${shortName(label || 'Mesh', 22)}`;
+    option.disabled = false;
+    ui.primitiveSelect.value = 'imported';
+    state.primitive = 'imported';
+  }
+
+  function clearImportedPrimitiveOption(selectFallback) {
+    const option = ui.primitiveSelect.querySelector('option[value="imported"]');
+    if (option && ui.primitiveSelect.value !== 'imported') option.remove();
+    if (selectFallback) {
+      const imported = ui.primitiveSelect.querySelector('option[value="imported"]');
+      if (imported) imported.remove();
+      if (ui.primitiveSelect.querySelector('option[value="sphere"]')) ui.primitiveSelect.value = 'sphere';
+      state.primitive = ui.primitiveSelect.value || 'sphere';
+    }
+  }
+
+  function updateImportInfo(fileName, type = '') {
+    if (!ui.importFileName) return;
+    if (fileName) {
+      ui.importFileName.textContent = shortName(fileName, 30);
+      ui.importFileName.title = fileName;
+      ui.importTypeBadge.textContent = type ? type.toUpperCase() : 'IMPORTED';
+    } else {
+      ui.importFileName.textContent = 'No imported mesh';
+      ui.importFileName.removeAttribute('title');
+      ui.importTypeBadge.textContent = 'OBJ / STL';
+    }
+  }
+
+  function importModelFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const extension = file.name.split('.').pop().toLowerCase();
+    const isObj = extension === 'obj';
+    const isStl = extension === 'stl';
+    if (!isObj && !isStl) {
+      setStatus('Import skipped: only OBJ and STL files are supported');
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => setStatus(`Import failed: ${file.name} could not be read`);
+    reader.onload = () => {
+      try {
+        const before = createHistoryPayload();
+        const parsed = isObj ? parseObjMesh(String(reader.result)) : parseStlMesh(reader.result);
+        replaceSceneWithImportedMesh(parsed, file.name, extension, before);
+      } catch (err) {
+        console.error(err);
+        setStatus(`Import failed: ${err.message || 'invalid mesh file'}`);
+      }
+    };
+
+    setStatus(`Importing ${file.name}...`);
+    if (isObj) reader.readAsText(file);
+    else reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  }
+
+  function replaceSceneWithImportedMesh(importedMesh, fileName, sourceType, before) {
+    const normalized = normalizeImportedMesh(importedMesh);
+    const prepared = prepareMesh(normalized);
+    validateImportedMesh(prepared, fileName);
+    const layerName = shortName(baseFileName(fileName), 32) || `Imported ${sourceType.toUpperCase()}`;
+    const layer = makeLayer(`layer-${Date.now()}-import`, layerName, `imported-${sourceType}`, prepared);
+    layers = [layer];
+    activeLayerId = layer.id;
+    layerSerial = 1;
+    ensureImportedPrimitiveOption(fileName);
+    updateImportInfo(fileName, sourceType);
+    setActiveLayer(layer.id);
+    frameModel();
+    pushHistoryEntry(`Import ${shortName(fileName, 32)}`, before, createHistoryPayload());
+    setDirty(true);
+    setStatus(`Imported ${fileName}`);
+  }
+
+  function validateImportedMesh(layerMesh, sourceName) {
+    const vertexCount = layerMesh.positions.length / 3;
+    const faceCount = layerMesh.indices.length / 3;
+    if (!Number.isFinite(vertexCount) || vertexCount < 3 || faceCount < 1) throw new Error(`${sourceName} has no usable triangles`);
+    if (vertexCount > MAX_VERTICES) throw new Error(`${sourceName} has ${vertexCount.toLocaleString('en-US')} vertices; limit is ${MAX_VERTICES.toLocaleString('en-US')}`);
+    for (let i = 0; i < layerMesh.positions.length; i++) {
+      if (!Number.isFinite(layerMesh.positions[i])) throw new Error(`${sourceName} contains invalid vertex coordinates`);
+    }
+  }
+
+  function normalizeImportedMesh(source) {
+    const positions = Array.from(source.positions || []);
+    const indices = Array.from(source.indices || []);
+    if (positions.length < 9 || indices.length < 3) throw new Error('The imported file does not contain a valid triangle mesh');
+    const b = computeBounds(new Float32Array(positions));
+    const scale = b.radius > 1e-8 ? 1.35 / b.radius : 1;
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i] = (positions[i] - b.center[0]) * scale;
+      positions[i + 1] = (positions[i + 1] - b.center[1]) * scale;
+      positions[i + 2] = (positions[i + 2] - b.center[2]) * scale;
+    }
+    return withMasks(positions, indices);
+  }
+
+  function parseObjMesh(text) {
+    const vertices = [];
+    const indices = [];
+    const lines = String(text).split(/\r?\n/);
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const parts = line.split(/\s+/);
+      const type = parts[0].toLowerCase();
+      if (type === 'v' && parts.length >= 4) {
+        const x = Number(parts[1]), y = Number(parts[2]), z = Number(parts[3]);
+        if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) vertices.push([x, y, z]);
+      } else if (type === 'f' && parts.length >= 4) {
+        const face = [];
+        for (let i = 1; i < parts.length; i++) {
+          const token = parts[i].split('/')[0];
+          if (!token) continue;
+          const resolved = resolveObjIndex(token, vertices.length);
+          if (resolved < 0 || resolved >= vertices.length) throw new Error('OBJ contains a face with an invalid vertex index');
+          face.push(resolved);
+        }
+        for (let i = 1; i < face.length - 1; i++) indices.push(face[0], face[i], face[i + 1]);
+      }
+    }
+    if (vertices.length === 0 || indices.length === 0) throw new Error('OBJ contains no usable vertices or faces');
+    if (vertices.length > MAX_VERTICES) throw new Error(`OBJ has ${vertices.length.toLocaleString('en-US')} vertices; limit is ${MAX_VERTICES.toLocaleString('en-US')}`);
+    return withMasks(vertices.flat(), indices);
+  }
+
+  function resolveObjIndex(token, vertexCount) {
+    const value = parseInt(token, 10);
+    if (!Number.isFinite(value) || value === 0) return -1;
+    return value < 0 ? vertexCount + value : value - 1;
+  }
+
+  function parseStlMesh(buffer) {
+    const arrayBuffer = buffer instanceof ArrayBuffer ? buffer : buffer.buffer;
+    const view = new DataView(arrayBuffer);
+    const length = arrayBuffer.byteLength;
+    if (length >= 84) {
+      const faceCount = view.getUint32(80, true);
+      if (84 + faceCount * 50 === length) return parseBinaryStl(view, faceCount);
+    }
+    const text = new TextDecoder('utf-8').decode(arrayBuffer);
+    if (/vertex\s+[+\-0-9.eE]+\s+[+\-0-9.eE]+\s+[+\-0-9.eE]+/i.test(text)) return parseAsciiStl(text);
+    if (length >= 84) return parseBinaryStl(view, view.getUint32(80, true));
+    throw new Error('STL contains no usable triangles');
+  }
+
+  function parseBinaryStl(view, faceCount) {
+    const builder = createIndexedMeshBuilder();
+    let offset = 84;
+    for (let i = 0; i < faceCount; i++) {
+      offset += 12;
+      const tri = [];
+      for (let v = 0; v < 3; v++) {
+        const x = view.getFloat32(offset, true);
+        const y = view.getFloat32(offset + 4, true);
+        const z = view.getFloat32(offset + 8, true);
+        offset += 12;
+        tri.push(builder.addVertex(x, y, z));
+      }
+      builder.indices.push(tri[0], tri[1], tri[2]);
+      offset += 2;
+      if (builder.positions.length / 3 > MAX_VERTICES) throw new Error(`STL exceeds the ${MAX_VERTICES.toLocaleString('en-US')} vertex limit`);
+    }
+    return builder.toMesh('STL');
+  }
+
+  function parseAsciiStl(text) {
+    const builder = createIndexedMeshBuilder();
+    const number = '[+\\-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+\\-]?\\d+)?';
+    const vertexPattern = new RegExp(`vertex\\s+(${number})\\s+(${number})\\s+(${number})`, 'gi');
+    let match;
+    const tri = [];
+    while ((match = vertexPattern.exec(text)) !== null) {
+      tri.push(builder.addVertex(Number(match[1]), Number(match[2]), Number(match[3])));
+      if (tri.length === 3) {
+        builder.indices.push(tri[0], tri[1], tri[2]);
+        tri.length = 0;
+      }
+      if (builder.positions.length / 3 > MAX_VERTICES) throw new Error(`STL exceeds the ${MAX_VERTICES.toLocaleString('en-US')} vertex limit`);
+    }
+    return builder.toMesh('STL');
+  }
+
+  function createIndexedMeshBuilder() {
+    const positions = [];
+    const indices = [];
+    const map = new Map();
+    return {
+      positions,
+      indices,
+      addVertex(x, y, z) {
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) throw new Error('Mesh contains invalid vertex coordinates');
+        const key = `${roundKey(x)}_${roundKey(y)}_${roundKey(z)}`;
+        if (map.has(key)) return map.get(key);
+        const index = positions.length / 3;
+        positions.push(x, y, z);
+        map.set(key, index);
+        return index;
+      },
+      toMesh(label) {
+        if (positions.length < 9 || indices.length < 3) throw new Error(`${label} contains no usable triangles`);
+        return withMasks(positions, indices);
+      }
+    };
+  }
+
+  function roundKey(value) {
+    return Math.round(value * 1000000) / 1000000;
+  }
+
+  function baseFileName(name) {
+    return String(name || '').replace(/\.[^.]+$/, '');
+  }
+
+  function shortName(name, maxLength = 28) {
+    const value = String(name || '');
+    if (value.length <= maxLength) return value;
+    return `${value.slice(0, Math.max(8, maxLength - 9))}…${value.slice(-6)}`;
   }
 
   async function saveProjectFile() {
@@ -767,7 +1149,9 @@
     const reader = new FileReader();
     reader.onload = () => {
       try {
+        const before = createHistoryPayload();
         loadProjectPayload(JSON.parse(String(reader.result)));
+        pushHistoryEntry(`Load ${file.name}`, before, createHistoryPayload());
         setStatus(`Loaded ${file.name}`);
       } catch (err) {
         console.error(err);
@@ -791,7 +1175,9 @@
       return;
     }
     try {
+      const before = createHistoryPayload();
       loadProjectPayload(JSON.parse(raw));
+      pushHistoryEntry('Quick Load', before, createHistoryPayload());
       setStatus('Quick Save loaded');
     } catch (err) {
       console.error(err);
@@ -856,9 +1242,17 @@
       throw new Error('Invalid SCULPTit project.');
     }
 
-    state.primitive = payload.primitive || layers[0]?.primitive || 'sphere';
+    const loadedPrimitive = payload.primitive || layers[0]?.primitive || 'sphere';
+    if (String(loadedPrimitive).startsWith('imported')) {
+      ensureImportedPrimitiveOption('Loaded Mesh');
+      updateImportInfo('Loaded Mesh', 'imported');
+    } else {
+      state.primitive = loadedPrimitive;
+      clearImportedPrimitiveOption(false);
+      updateImportInfo(null);
+      if (ui.primitiveSelect.querySelector(`option[value="${state.primitive}"]`)) ui.primitiveSelect.value = state.primitive;
+    }
     state.detail = payload.detail || state.detail;
-    if (ui.primitiveSelect.querySelector(`option[value="${state.primitive}"]`)) ui.primitiveSelect.value = state.primitive;
     ui.detail.value = String(state.detail);
     ui.detail.dispatchEvent(new Event('input'));
 
@@ -870,6 +1264,7 @@
       updateCamera();
     }
     renderLayerList();
+    renderHistoryList();
     updateStats();
     setDirty(false);
   }
@@ -967,7 +1362,10 @@
 - **6-9:** Smooth, Pinch, Crease, Scrape
 - **Ctrl + S:** Save the project as a file
 - **Ctrl + O:** Open a project file
+- **Import Mesh:** Load an OBJ or STL as the active editable scene
 - **Ctrl + N:** Create a new model on the active layer
+- **Ctrl + Z:** Undo the last history action
+- **Ctrl + Y / Ctrl + Shift + Z:** Redo the last undone action
 
 Orbit Y is no longer inverted by default. Enable **Invert Orbit Y** under **Viewport** if you prefer the previous navigation behavior.`);
     ui.modalBackdrop.hidden = false;
@@ -1628,4 +2026,3 @@ Orbit Y is no longer inverted by default. Enable **Invert Orbit Y** under **View
   }
 
 })();
-// sksdesign (c) 2026 

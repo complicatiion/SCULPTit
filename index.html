@@ -57,6 +57,18 @@
         </div>
       </section>
 
+      <section class="panel-section import-section">
+        <div class="section-head">
+          <h2>Import</h2>
+          <span id="importTypeBadge" class="pill">OBJ / STL</span>
+        </div>
+        <p class="import-hint">Import an OBJ or STL mesh as the active sculpt model. The current scene is replaced.</p>
+        <button id="importModel" class="neon-btn import-main-btn">Import Mesh</button>
+        <input id="modelFileInput" type="file" accept=".obj,.stl,model/stl,text/plain" hidden />
+        <div id="importFileName" class="import-file-name">No imported mesh</div>
+      </section>
+
+
       <section class="panel-section layers-section">
         <div class="section-head">
           <h2>Layers</h2>
@@ -69,21 +81,31 @@
         </div>
       </section>
 
+
+      <section class="panel-section history-section">
+        <div class="section-head">
+          <h2>History</h2>
+          <span id="historyCountBadge" class="pill">0</span>
+        </div>
+        <div class="history-actions" role="toolbar" aria-label="History actions">
+          <button id="undoHistory" class="neon-btn history-btn" title="Undo last action (Ctrl+Z)">↶ Undo</button>
+          <button id="redoHistory" class="neon-btn history-btn" title="Redo last action (Ctrl+Y / Ctrl+Shift+Z)">Redo ↷</button>
+        </div>
+        <div id="historyList" class="history-list" aria-label="Action history"></div>
+      </section>
+
       <section class="panel-section shortcut-section">
         <h2>Quick Keys</h2>
         <div class="mini-help">
-          <div><kbd>LMB</kbd><span>Sculpt</span></div>
-          <div><kbd>RMB</kbd><span>Orbit</span></div>
+          <div><kbd>Alt / RMB</kbd><span>Orbit</span></div>
           <div><kbd>MMB</kbd><span>Pan</span></div>
           <div><kbd>Wheel</kbd><span>Zoom</span></div>
           <div><kbd>Shift</kbd><span>Smooth</span></div>
-          <div><kbd>Alt</kbd><span>Orbit / invert Pull</span></div>
-          <div><kbd>F</kbd><span>Frame model</span></div>
         </div>
       </section>
 
       <div class="left-footer">
-        <span class="version-pill">v1.2.1</span>
+        <span class="version-pill">v1.2.3</span>
         <a class="repo-link" href="https://github.com/complicatiion/SCULPTit" target="_blank" rel="noopener">GitHub Repo</a>
       </div>
     </aside>

@@ -185,4 +185,4 @@ Project names, logos, icons, and visual branding may not be used to imply endors
 
 By using, copying, modifying, forking, cloning, redistributing, or otherwise interacting with the SCULPTit software, you agree to the terms of this license.
 
-### complicatiion aka sksdesign 01.05.2026
+### © complicatiion aka sksdesign · 2026
